@@ -77,7 +77,49 @@ class SelectorBIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+
+        bic_score = float('inf')
+        best_model = None
+
+        for n_components in range(self.min_n_components, self.max_n_components+1):
+            model = self.base_model(n_components)
+
+            #skip if the model isn't there
+            if model is None:
+                #print("Missing Model")
+                continue
+
+            #hmm errors in some version? from forums
+            try:
+                logL = model.score(self.X, self.lengths)
+            except:
+                continue
+
+
+
+            # Not sure about this one. Worked it out from here;
+            # https://stats.stackexchange.com/questions/12341/number-of-parameters-in-markov-model
+            # and from https://discussions.udacity.com/t/number-of-parameters-bic-calculation/233235/11
+            # Parameters = Initial state occupation probabilities + Transition probabilities + Emission probabilities
+            is_prob = n_components
+            tr_prob = n_components * (n_components-1)
+            em_prob = n_components * self.X.shape[1]*2
+
+            #p = is_prob + tr_prob + em_prob
+
+            # Based on feedback from another student, not sure why it works?
+            p = n_components**2 + (2 * len(self.X[0]) * n_components)
+
+            logN = np.log(len(self.X))
+
+            BIC = -2 * logL + p * logN
+
+            if  BIC < bic_score:
+                bic_score = BIC
+                best_model = model
+
+
+        return best_model
 
 
 class SelectorDIC(ModelSelector):
@@ -93,7 +135,35 @@ class SelectorDIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        dic_score = float('-inf')
+        best_model = None
+
+        for n_components in range(self.min_n_components, self.max_n_components+1):
+
+            model = self.base_model(n_components)
+
+            try:
+                logL = model.score(self.X, self.lengths)
+            except:
+                continue
+
+            partial_list = []
+            for word in self.hwords:
+                if word != self.this_word :
+                    h_X, h_lengths = self.hwords[word]
+                    try:
+                        partial_list.append(model.score(h_X, h_lengths))
+                    except:
+                        print("Model error")
+                        continue
+
+            DIC = logL - np.average(partial_list)
+
+            #dic_score, best_model = max((dic_score,best_model),(DIC,model))
+            if  DIC > dic_score:
+                dic_score = DIC
+                best_model = model
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -105,4 +175,43 @@ class SelectorCV(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection using CV
-        raise NotImplementedError
+
+        n_splits = 3
+        if len(self.sequences) < 2:
+            return None
+        elif len(self.sequences) == 2:
+            n_splits = 2
+
+        cv_score = float('-inf')
+        best_model = None
+        split_method = KFold(n_splits=n_splits)
+
+        for n_components in range(self.min_n_components, self.max_n_components+1):
+
+            partial_list = []
+
+            for train_idx, test_idx in split_method.split(self.sequences):
+
+                # Combine training sequences
+                self.X, self.lengths = combine_sequences(train_idx, self.sequences)
+
+                model = self.base_model(n_components)
+
+                test_X, test_lengths = combine_sequences(test_idx, self.sequences)
+
+                try:
+                    partial_list.append(model.score(test_X, test_lengths))
+                except Exception as e:
+                    #print("Model Errors: {}".format(e))
+                    continue
+
+            if model is None or partial_list == []:
+                continue
+
+
+            score = np.mean(partial_list)
+            if  score > cv_score:
+                cv_score = score
+                best_model = model
+
+        return best_model
